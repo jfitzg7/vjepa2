@@ -14,6 +14,7 @@ import pandas as pd
 import torch
 import torchvision
 from decord import cpu, VideoReader
+import pydicom
 
 from src.datasets.utils.dataloader import (
     ConcatIndices,
@@ -218,8 +219,11 @@ class VideoDataset(torch.utils.data.Dataset):
             if not isinstance(sample, str):
                 logger.warning("Invalid sample.")
             else:
-                if sample.split(".")[-1].lower() in ("jpg", "png", "jpeg"):
+                ext = sample.split(".")[-1].lower()
+                if ext in ("jpg", "png", "jpeg"):
                     loaded_sample = self.get_item_image(index)
+                elif ext == "dcm":
+                    loaded_sample = self.get_item_dicom(index)
                 else:
                     loaded_sample = self.get_item_video(index)
 
@@ -285,6 +289,119 @@ class VideoDataset(torch.utils.data.Dataset):
             buffer = [self.transform(buffer)]
 
         return buffer, label, clip_indices
+
+    def get_item_dicom(self, index):
+        sample = self.samples[index]
+        dataset_idx, _ = self.per_dataset_indices[index]
+        frames_per_clip = self.dataset_fpcs[dataset_idx]
+
+        buffer, clip_indices = self.loadvideo_dicom(
+            sample, frames_per_clip
+        )  # Returns [T H W 3]
+        
+        if buffer is None or len(buffer) == 0:
+            return None
+
+        label = self.labels[index]
+
+        def split_into_clips(video):
+            fpc = frames_per_clip
+            nc = self.num_clips
+            return [video[i * fpc : (i + 1) * fpc] for i in range(nc)]
+
+        if self.shared_transform is not None:
+            buffer = self.shared_transform(buffer)
+        
+        buffer = split_into_clips(buffer)
+        
+        if self.transform is not None:
+            buffer = [self.transform(clip) for clip in buffer]
+
+        return buffer, label, clip_indices
+
+    def loadvideo_dicom(self, sample, fpc):
+        """DICOM implementation of Meta's loadvideo_decord logic"""
+        if not os.path.exists(sample):
+            warnings.warn(f"DICOM path not found {sample=}")
+            return [], None
+
+        try:
+            ds = pydicom.dcmread(sample)
+            pixel_array = ds.pixel_array  # [Frames, H, W]
+
+            # 1. Normalize to uint8 to match decord's expected format
+            pixel_array = pixel_array.astype(np.float32)
+            pixel_array -= pixel_array.min()
+            pixel_array /= (pixel_array.max() + 1e-6)
+            pixel_array *= 255.0
+            full_video = pixel_array.astype(np.uint8)
+
+            # 2. Ensure RGB [T, H, W, 3]
+            if len(full_video.shape) == 3:
+                full_video = np.stack([full_video] * 3, axis=-1)
+
+            # 3. Apply Ultrasound UI Crop (Crucial)
+            full_video = full_video[:, 40:-40, 40:-40, :]
+
+            # --- THE FIX: DYNAMIC FRAME STRIDE CALCULATION ---
+            fstp = self.frame_step
+            if self.duration is not None or self.fps is not None:
+                # Try to extract native FPS from DICOM metadata
+                video_fps = 30.0 # Standard ultrasound fallback
+                if hasattr(ds, 'CineRate'):
+                    video_fps = float(ds.CineRate)
+                elif hasattr(ds, 'RecommendedDisplayFrameRate'):
+                    video_fps = float(ds.RecommendedDisplayFrameRate)
+                elif hasattr(ds, 'FrameTime'):
+                    # FrameTime is milliseconds per frame
+                    video_fps = 1000.0 / float(ds.FrameTime)
+
+                video_fps = math.ceil(video_fps)
+
+                if self.duration is not None:
+                    fstp = int(self.duration * video_fps / fpc)
+                else:
+                    fstp = video_fps // self.fps
+
+            # Failsafe in case of weird metadata or very short videos
+            if fstp is None or fstp < 1:
+                fstp = 1
+
+            clip_len = int(fpc * fstp)
+            # -------------------------------------------------
+
+            total_frames = full_video.shape[0]
+
+            # 4. Mirror Meta's partition sampling logic
+            partition_len = total_frames // self.num_clips
+            all_indices, clip_indices = [], []
+
+            for i in range(self.num_clips):
+                start_boundary = i * partition_len
+                end_boundary = (i + 1) * partition_len
+
+                if partition_len > clip_len:
+                    if self.random_clip_sampling:
+                        start_indx = np.random.randint(start_boundary, end_boundary - clip_len + 1)
+                    else:
+                        start_indx = start_boundary
+
+                    indices = np.linspace(start_indx, start_indx + clip_len - 1, num=fpc)
+                    indices = np.clip(indices, start_boundary, end_boundary - 1).astype(np.int64)
+                else:
+                    # Fallback for short videos: sample what's available
+                    indices = np.linspace(start_boundary, end_boundary - 1, num=fpc).astype(np.int64)
+
+                clip_indices.append(indices)
+                all_indices.extend(list(indices))
+
+            # Sample the frames from the numpy array
+            buffer = full_video[all_indices]
+            return buffer, clip_indices
+
+        except Exception as e:
+            logger.warning(f"Error loading DICOM {sample}: {e}")
+            return [], None
 
     def loadvideo_decord(self, sample, fpc):
         """Load video content using Decord"""

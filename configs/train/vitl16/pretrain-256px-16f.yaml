@@ -1,31 +1,29 @@
 app: vjepa
-nodes: 16
-tasks_per_node: 8
+nodes: 1
+tasks_per_node: 1
 cpus_per_task: 16
 mem_per_gpu: 220G
-folder: /your_folder/pretrain/16.8.vitl.256px.16f
+folder: /home/jack/csu_ll_vjepa2_pretrain/checkpoints_apr_13
+
+
 data:
   dataset_type: VideoDataset
   datasets:
-  - /your_k710_root_dir/k710_train_paths.csv
-  - /your_data_path/ssv2_train_paths.csv
-  - /your_data/howto_320p.csv
+  - /home/jack/csu_ll_vjepa2_pretrain/train.csv
   datasets_weights:
-  - 0.335
-  - 0.100
-  - 0.565
-  batch_size: 24
+  - 1.0
+  batch_size: 16
   crop_size: 256
   patch_size: 16
   dataset_fpcs:
-  - 16
-  - 16
   - 16
   tubelet_size: 2
   fps: 4
   num_workers: 8
   persistent_workers: true
   pin_mem: true
+
+
 data_aug:
   auto_augment: false
   motion_shift: false
@@ -36,8 +34,12 @@ data_aug:
   - 0.3
   - 1.0
   reprob: 0.0
+
+
 loss:
   loss_exp: 1.0
+
+
 mask:
 - aspect_ratio:
   - 0.75
@@ -65,14 +67,18 @@ mask:
   temporal_scale:
   - 1.0
   - 1.0
+
+
 meta:
   dtype: bfloat16
   eval_freq: 100
   load_checkpoint: true
   read_checkpoint: null
-  save_every_freq: 50
+  save_every_freq: 5
   seed: 239
   use_sdpa: true
+
+
 model:
   model_name: vit_large
   pred_depth: 12
@@ -83,16 +89,18 @@ model:
   use_mask_tokens: true
   use_rope: true
   zero_init_mask_tokens: true
+
+
 optimization:
   ema:
-  - 0.99925
-  - 0.99925
-  epochs: 10
-  final_lr: 0.000525
+  - 0.996
+  - 0.996
+  epochs: 5
+  final_lr: 0.000015
   final_weight_decay: 0.04
-  ipe: 300
-  ipe_scale: 1.25
-  lr: 0.000525
-  start_lr: 0.0001
-  warmup: 40
-  weight_decay: 0.04
+  ipe: 168
+  ipe_scale: 1.0
+  lr: 0.000015
+  start_lr: 0.000001
+  warmup: 5
+  weight_decay: 0.05
