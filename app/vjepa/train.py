@@ -499,6 +499,22 @@ def main(args, resume_preempt=False):
             # -- Logging
             def log_stats():
                 csv_logger.log(epoch + 1, itr, loss, iter_elapsed_time_ms, gpu_etime_ms, data_elapsed_time_ms)
+
+                if rank == 0:
+                    import wandb
+                    wandb.log({
+                        "epoch": epoch + 1,
+                        "iteration": epoch * ipe + itr,
+                        "train/loss_current": loss,
+                        "train/loss_avg": loss_meter.avg,
+                        "train/learning_rate": _new_lr,
+                        "train/weight_decay": _new_wd,
+                        "time/iter_ms": iter_time_meter.avg,
+                        "time/gpu_ms": gpu_time_meter.avg,
+                        "time/data_ms": data_elapsed_time_meter.avg,
+                        "system/gpu_mem_mb": torch.cuda.max_memory_allocated() / 1024.0**2,
+                    })
+
                 if (itr % log_freq == 0) or (itr == ipe - 1) or np.isnan(loss) or np.isinf(loss):
                     logger.info(
                         "[%d, %5d] loss: %.3f "

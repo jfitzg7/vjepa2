@@ -69,8 +69,19 @@ def process_main(rank, fname, world_size, devices):
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
     logger.info(f"Running... (rank: {rank}/{world_size})")
 
+    if rank == 0:
+        import wandb
+        wandb.init(
+            project="VJEPA2 ultrasound pretraining",
+            config=params,
+            resume="allow"
+        )
+
     # Launch the app with loaded config
     app_main(params["app"], args=params)
+
+    if rank == 0:
+        wandb.finish()
 
 
 if __name__ == "__main__":

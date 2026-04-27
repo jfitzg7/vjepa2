@@ -1,3 +1,5 @@
+wandb/
+
 *.pyc
 .vscode/
 .*.swp
